@@ -9,7 +9,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
 # Default context (change this to your cluster)
-KUBE_CONTEXT="${1:-arn:aws:eks:us-east-1:225989329684:cluster/sparrowgenie-staging-cluster}"
+KUBE_CONTEXT="${1:-}"
 COLLECTION_INTERVAL="${COLLECTION_INTERVAL:-5m}"
 WEB_PORT="${WEB_PORT:-8080}"
 
