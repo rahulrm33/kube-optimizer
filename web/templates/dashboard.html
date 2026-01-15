@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K8s Resource Optimizer Dashboard</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+        }
+        
+        [data-theme="dark"] {
+            --bg-primary: #1a1d20;
+            --bg-secondary: #2d3239;
+            --text-primary: #e9ecef;
+            --text-secondary: #adb5bd;
+            --border-color: #495057;
+        }
+        
+        body {
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        
+        .card {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        
+        .stat-card {
+            transition: transform 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .badge-over {
+            background-color: #dc3545;
+        }
+        
+        .badge-under {
+            background-color: #ffc107;
+            color: #000;
+        }
+        
+        .badge-optimal {
+            background-color: #28a745;
+        }
+        
+        .navbar {
+            background-color: var(--bg-primary) !important;
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .table {
+            color: var(--text-primary);
+        }
+        
+        [data-theme="dark"] .table {
+            --bs-table-bg: var(--bg-primary);
+            --bs-table-striped-bg: var(--bg-secondary);
+            --bs-table-hover-bg: #343a40;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 2rem;
+        }
+        
+        .filters {
+            background-color: var(--bg-primary);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+        
+        .theme-toggle {
+            cursor: pointer;
+            font-size: 1.5rem;
+        }
+        
+        .btn-action {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+            margin: 0 0.25rem;
+        }
+        
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .sortable:hover {
+            background-color: var(--bg-secondary);
+        }
+        
+        .sortable::after {
+            content: " ↕";
+            opacity: 0.5;
+        }
+        
+        .sortable.asc::after {
+            content: " ↑";
+            opacity: 1;
+        }
+        
+        .sortable.desc::after {
+            content: " ↓";
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up-arrow"></i> K8s Resource Optimizer
+            </a>
+            <div class="d-flex align-items-center">
+                <span class="text-muted me-3" id="lastUpdated">
+                    <small>Last updated: <span id="lastUpdateTime">{{ .stats.LastAnalysis.Format "Jan 02, 15:04" }}</span></small>
+                </span>
+                <button class="btn btn-sm btn-outline-primary me-2" onclick="refreshData()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+                <span class="theme-toggle" onclick="toggleTheme()">
+                    <i class="bi bi-moon-fill" id="themeIcon"></i>
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <div class="container-fluid mt-4">
+        <!-- Summary Cards -->
+        <div class="row">
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <div class="stat-label">Total Monthly Savings</div>
+                        <p class="stat-value text-success" id="totalSavings">
+                            ${{ printf "%.2f" .stats.TotalMonthlySavings }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <div class="stat-label">Over-provisioned</div>
+                        <p class="stat-value text-danger" id="overProvisioned">
+                            {{ .stats.OverProvisioned }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <div class="stat-label">Under-provisioned</div>
+                        <p class="stat-value text-warning" id="underProvisioned">
+                            {{ .stats.UnderProvisioned }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <div class="stat-label">Optimal</div>
+                        <p class="stat-value text-success" id="optimal">
+                            {{ .stats.Optimal }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Pods by Status</h5>
+                        <div class="chart-container">
+                            <canvas id="statusChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Top 10 Wasteful Pods</h5>
+                        <div class="chart-container">
+                            <canvas id="savingsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pod Resource Comparison Section -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-bar-chart-line"></i> Pod Resource Comparison
+                </h5>
+                <p class="text-muted small">Select a pod to compare Usage vs Request vs Recommendation</p>
+                
+                <!-- Pod Selector -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <label for="podSelector" class="form-label">Select Pod</label>
+                        <select class="form-select" id="podSelector" onchange="updatePodComparisonChart()">
+                            <option value="">-- Select a Pod --</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="legend-container">
+                            <span class="badge bg-primary me-2">■ Current Request</span>
+                            <span class="badge bg-success me-2">■ Actual Usage</span>
+                            <span class="badge bg-warning text-dark">■ Recommendation</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Comparison Charts -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-center">CPU (millicores)</h6>
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="cpuComparisonChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-center">Memory (MB)</h6>
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="memoryComparisonChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Waste Indicator -->
+                <div class="row mt-3" id="wasteIndicator" style="display: none;">
+                    <div class="col-md-6">
+                        <div class="alert alert-info mb-0">
+                            <strong>CPU Waste:</strong> <span id="cpuWastePercent">0%</span>
+                            <div class="progress mt-2" style="height: 8px;">
+                                <div class="progress-bar" id="cpuWasteBar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="alert alert-info mb-0">
+                            <strong>Memory Waste:</strong> <span id="memoryWastePercent">0%</span>
+                            <div class="progress mt-2" style="height: 8px;">
+                                <div class="progress-bar" id="memoryWasteBar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="namespaceFilter" class="form-label">Namespace</label>
+                    <select class="form-select" id="namespaceFilter" onchange="applyFilters()">
+                        <option value="">All Namespaces</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="statusFilter" class="form-label">Status</label>
+                    <select class="form-select" id="statusFilter" onchange="applyFilters()">
+                        <option value="">All Status</option>
+                        <option value="over-provisioned">Over-provisioned</option>
+                        <option value="under-provisioned">Under-provisioned</option>
+                        <option value="optimal">Optimal</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="sortBy" class="form-label">Sort By</label>
+                    <select class="form-select" id="sortBy" onchange="applyFilters()">
+                        <option value="savings">Savings (High to Low)</option>
+                        <option value="waste">Waste % (High to Low)</option>
+                        <option value="name">Pod Name (A-Z)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="searchBox" class="form-label">Search</label>
+                    <input type="text" class="form-control" id="searchBox" placeholder="Pod name..." onkeyup="handleSearch()">
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div class="loading" id="loadingIndicator">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading data...</p>
+        </div>
+
+        <!-- Recommendations Table -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Recommendations</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped">
+                        <thead>
+                            <tr>
+                                <th class="sortable" onclick="sortTable('namespace')">Namespace</th>
+                                <th class="sortable" onclick="sortTable('pod')">Pod</th>
+                                <th class="sortable" onclick="sortTable('container')">Container</th>
+                                <th>Current CPU</th>
+                                <th>Recommended CPU</th>
+                                <th>Current Memory</th>
+                                <th>Recommended Memory</th>
+                                <th class="sortable" onclick="sortTable('savings')">Savings</th>
+                                <th>Confidence</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recommendationsTable">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Global variables
+        let statusChart, savingsChart, cpuComparisonChart, memoryComparisonChart;
+        let allPods = [];
+        let currentSort = { column: 'savings', direction: 'desc' };
+        let autoRefreshInterval;
+        let selectedPodData = null;
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCharts();
+            initializeComparisonCharts();
+            loadNamespaces();
+            loadRecommendations();
+            startAutoRefresh();
+            loadTheme();
+        });
+
+        // Initialize Charts
+        function initializeCharts() {
+            // Status Pie Chart
+            const statusCtx = document.getElementById('statusChart').getContext('2d');
+            statusChart = new Chart(statusCtx, {
+                type: 'pie',
+                data: {
+                    labels: ['Over-provisioned', 'Under-provisioned', 'Optimal'],
+                    datasets: [{
+                        data: [{{ .stats.OverProvisioned }}, {{ .stats.UnderProvisioned }}, {{ .stats.Optimal }}],
+                        backgroundColor: ['#dc3545', '#ffc107', '#28a745'],
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            // Top 10 Savings Bar Chart
+            const savingsCtx = document.getElementById('savingsChart').getContext('2d');
+            const topPods = {{ .topPods | len }};
+            const labels = [];
+            const data = [];
+            
+            {{ range .topPods }}
+            labels.push('{{ .PodName }}');
+            data.push({{ .MonthlySavings }});
+            {{ end }}
+
+            savingsChart = new Chart(savingsCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Monthly Savings ($)',
+                        data: data,
+                        backgroundColor: '#0d6efd',
+                        borderColor: '#0d6efd',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initialize Comparison Charts
+        function initializeComparisonCharts() {
+            // CPU Comparison Chart
+            const cpuCtx = document.getElementById('cpuComparisonChart').getContext('2d');
+            cpuComparisonChart = new Chart(cpuCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['Request', 'Usage', 'Recommended'],
+                    datasets: [{
+                        label: 'CPU (millicores)',
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgba(13, 110, 253, 0.8)',   // Blue - Request
+                            'rgba(40, 167, 69, 0.8)',    // Green - Usage
+                            'rgba(255, 193, 7, 0.8)'     // Yellow - Recommended
+                        ],
+                        borderColor: [
+                            'rgb(13, 110, 253)',
+                            'rgb(40, 167, 69)',
+                            'rgb(255, 193, 7)'
+                        ],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y.toFixed(0) + 'm';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'millicores'
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Memory Comparison Chart
+            const memCtx = document.getElementById('memoryComparisonChart').getContext('2d');
+            memoryComparisonChart = new Chart(memCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['Request', 'Usage', 'Recommended'],
+                    datasets: [{
+                        label: 'Memory (MB)',
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgba(13, 110, 253, 0.8)',   // Blue - Request
+                            'rgba(40, 167, 69, 0.8)',    // Green - Usage  
+                            'rgba(255, 193, 7, 0.8)'     // Yellow - Recommended
+                        ],
+                        borderColor: [
+                            'rgb(13, 110, 253)',
+                            'rgb(40, 167, 69)',
+                            'rgb(255, 193, 7)'
+                        ],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y.toFixed(0) + ' MB';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'MB'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update pod selector dropdown
+        function populatePodSelector(pods) {
+            const selector = document.getElementById('podSelector');
+            if (!selector) {
+                console.error('Pod selector not found');
+                return;
+            }
+            
+            console.log('Populating pod selector with', pods.length, 'pods');
+            
+            // Clear all options except the first placeholder
+            while (selector.options.length > 1) {
+                selector.remove(1);
+            }
+            
+            // Remove any optgroups
+            const optgroups = selector.querySelectorAll('optgroup');
+            optgroups.forEach(og => og.remove());
+            
+            if (!pods || pods.length === 0) {
+                console.log('No pods to display');
+                return;
+            }
+            
+            // Deduplicate pods by namespace/pod/container key
+            const uniquePods = {};
+            pods.forEach(pod => {
+                const key = `${pod.namespace}/${pod.pod_name}/${pod.container_name}`;
+                if (!uniquePods[key] || pod.monthly_savings > uniquePods[key].monthly_savings) {
+                    uniquePods[key] = pod;
+                }
+            });
+            
+            const deduped = Object.values(uniquePods);
+            console.log('Unique pods:', deduped.length);
+            
+            // Group by namespace
+            const namespaces = {};
+            deduped.forEach(pod => {
+                if (!namespaces[pod.namespace]) {
+                    namespaces[pod.namespace] = [];
+                }
+                namespaces[pod.namespace].push(pod);
+            });
+            
+            // Add options sorted by savings (without optgroup for better compatibility)
+            const allPodsSorted = [];
+            Object.keys(namespaces).sort().forEach(ns => {
+                namespaces[ns].forEach(pod => {
+                    allPodsSorted.push(pod);
+                });
+            });
+            
+            // Sort by savings descending
+            allPodsSorted.sort((a, b) => b.monthly_savings - a.monthly_savings);
+            
+            allPodsSorted.forEach(pod => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify(pod);
+                const savings = pod.monthly_savings ? `$${pod.monthly_savings.toFixed(2)}` : '';
+                option.textContent = `[${pod.namespace}] ${pod.pod_name}/${pod.container_name} ${savings}`;
+                selector.appendChild(option);
+            });
+            
+            console.log('Pod selector populated with', deduped.length, 'unique pods');
+        }
+
+        // Update comparison chart when pod is selected
+        async function updatePodComparisonChart() {
+            const selector = document.getElementById('podSelector');
+            const wasteIndicator = document.getElementById('wasteIndicator');
+            
+            if (!selector.value) {
+                // Reset charts if no pod selected
+                cpuComparisonChart.data.datasets[0].data = [0, 0, 0];
+                memoryComparisonChart.data.datasets[0].data = [0, 0, 0];
+                cpuComparisonChart.update();
+                memoryComparisonChart.update();
+                wasteIndicator.style.display = 'none';
+                return;
+            }
+            
+            const pod = JSON.parse(selector.value);
+            
+            // Fetch detailed pod info with usage history
+            try {
+                const response = await fetch(`/api/pod/${pod.namespace}/${pod.pod_name}`);
+                const data = await response.json();
+                
+                // Calculate average usage from history (or use current if no history)
+                let avgCpuUsage = 0;
+                let avgMemUsage = 0;
+                
+                if (data.usage_history && data.usage_history.length > 0) {
+                    const cpuSum = data.usage_history.reduce((sum, h) => sum + h.cpu, 0);
+                    const memSum = data.usage_history.reduce((sum, h) => sum + h.memory, 0);
+                    avgCpuUsage = cpuSum / data.usage_history.length;
+                    avgMemUsage = memSum / data.usage_history.length;
+                } else if (data.analysis) {
+                    avgCpuUsage = data.analysis.avg_cpu || 0;
+                    avgMemUsage = data.analysis.avg_memory || 0;
+                }
+                
+                // Convert to display units
+                const cpuRequest = pod.current_cpu * 1000;  // to millicores
+                const cpuUsage = avgCpuUsage * 1000;        // to millicores
+                const cpuRecommended = pod.recommended_cpu * 1000;
+                
+                const memRequest = pod.current_memory / (1024 * 1024);  // to MB
+                const memUsage = avgMemUsage / (1024 * 1024);           // to MB
+                const memRecommended = pod.recommended_memory / (1024 * 1024);
+                
+                // Update CPU Chart
+                cpuComparisonChart.data.datasets[0].data = [cpuRequest, cpuUsage, cpuRecommended];
+                cpuComparisonChart.update();
+                
+                // Update Memory Chart
+                memoryComparisonChart.data.datasets[0].data = [memRequest, memUsage, memRecommended];
+                memoryComparisonChart.update();
+                
+                // Update waste indicators
+                wasteIndicator.style.display = 'flex';
+                
+                const cpuWaste = pod.cpu_waste_percent || 0;
+                const memWaste = pod.memory_waste_percent || 0;
+                
+                document.getElementById('cpuWastePercent').textContent = cpuWaste.toFixed(1) + '%';
+                document.getElementById('memoryWastePercent').textContent = memWaste.toFixed(1) + '%';
+                
+                // Update progress bars with color coding
+                const cpuBar = document.getElementById('cpuWasteBar');
+                const memBar = document.getElementById('memoryWasteBar');
+                
+                cpuBar.style.width = Math.min(Math.abs(cpuWaste), 100) + '%';
+                memBar.style.width = Math.min(Math.abs(memWaste), 100) + '%';
+                
+                // Color based on waste direction
+                if (cpuWaste > 0) {
+                    cpuBar.className = 'progress-bar bg-danger';  // Over-provisioned
+                } else if (cpuWaste < -10) {
+                    cpuBar.className = 'progress-bar bg-warning'; // Under-provisioned
+                } else {
+                    cpuBar.className = 'progress-bar bg-success'; // Optimal
+                }
+                
+                if (memWaste > 0) {
+                    memBar.className = 'progress-bar bg-danger';
+                } else if (memWaste < -10) {
+                    memBar.className = 'progress-bar bg-warning';
+                } else {
+                    memBar.className = 'progress-bar bg-success';
+                }
+                
+            } catch (error) {
+                console.error('Failed to load pod details:', error);
+                showToast('Failed to load pod details', 'danger');
+            }
+        }
+
+        // Load namespaces for filter
+        async function loadNamespaces() {
+            try {
+                const response = await fetch('/api/namespaces');
+                const data = await response.json();
+                const select = document.getElementById('namespaceFilter');
+                
+                data.namespaces.forEach(ns => {
+                    const option = document.createElement('option');
+                    option.value = ns;
+                    option.textContent = ns;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load namespaces:', error);
+            }
+        }
+
+        // Load recommendations
+        async function loadRecommendations() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/pods?limit=100');
+                const data = await response.json();
+                allPods = data.pods || [];
+                renderTable(allPods);
+                populatePodSelector(allPods);  // Populate the pod comparison dropdown
+            } catch (error) {
+                console.error('Failed to load recommendations:', error);
+                showToast('Error loading recommendations', 'danger');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Render table
+        function renderTable(pods) {
+            const tbody = document.getElementById('recommendationsTable');
+            tbody.innerHTML = '';
+
+            if (!pods || pods.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center">No recommendations found</td></tr>';
+                return;
+            }
+
+            pods.forEach(pod => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${pod.namespace}</td>
+                    <td>${pod.pod_name}</td>
+                    <td>${pod.container_name}</td>
+                    <td>${formatCPU(pod.current_cpu)}</td>
+                    <td>${formatCPU(pod.recommended_cpu)}</td>
+                    <td>${formatMemory(pod.current_memory)}</td>
+                    <td>${formatMemory(pod.recommended_memory)}</td>
+                    <td>$${pod.monthly_savings.toFixed(2)}</td>
+                    <td><span class="badge bg-info">${pod.confidence}</span></td>
+                    <td><span class="badge badge-${pod.status.split('-')[0]}">${pod.status}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-primary btn-action" onclick="viewDetails('${pod.namespace}', '${pod.pod_name}')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-success btn-action" onclick="downloadYAML('${pod.namespace}', '${pod.pod_name}')">
+                            <i class="bi bi-download"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Apply filters
+        async function applyFilters() {
+            const namespace = document.getElementById('namespaceFilter').value;
+            const status = document.getElementById('statusFilter').value;
+            const sortBy = document.getElementById('sortBy').value;
+
+            showLoading(true);
+            try {
+                const params = new URLSearchParams();
+                if (namespace) params.append('namespace', namespace);
+                if (status) params.append('status', status);
+                if (sortBy) params.append('sort_by', sortBy);
+                params.append('limit', '100');
+
+                const response = await fetch(`/api/pods?${params.toString()}`);
+                const data = await response.json();
+                allPods = data.pods || [];
+                renderTable(allPods);
+            } catch (error) {
+                console.error('Failed to apply filters:', error);
+                showToast('Error applying filters', 'danger');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Handle search
+        let searchTimeout;
+        function handleSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                const searchTerm = document.getElementById('searchBox').value;
+                if (searchTerm.length === 0) {
+                    await loadRecommendations();
+                    return;
+                }
+
+                if (searchTerm.length < 2) return;
+
+                showLoading(true);
+                try {
+                    const response = await fetch(`/api/pods?search=${encodeURIComponent(searchTerm)}`);
+                    const data = await response.json();
+                    allPods = data.pods || [];
+                    renderTable(allPods);
+                } catch (error) {
+                    console.error('Search failed:', error);
+                    showToast('Search failed', 'danger');
+                } finally {
+                    showLoading(false);
+                }
+            }, 300);
+        }
+
+        // View pod details
+        function viewDetails(namespace, podName) {
+            window.open(`/pod/${namespace}/${podName}`, '_blank');
+        }
+
+        // Download YAML (will be implemented with recommendation ID)
+        async function downloadYAML(namespace, podName) {
+            try {
+                // First get the pod details to find recommendation ID
+                const response = await fetch(`/api/pod/${namespace}/${podName}`);
+                const data = await response.json();
+                
+                // For now, create a simple download link
+                // In production, you'd have the recommendation ID
+                showToast('Generating YAML patch...', 'info');
+                
+                // Simulate download (you'd use the actual recommendation ID)
+                const yamlContent = generateYAMLPatch(data.pod);
+                downloadFile(`patch-${namespace}-${podName}.yaml`, yamlContent);
+            } catch (error) {
+                console.error('Failed to download YAML:', error);
+                showToast('Failed to download YAML', 'danger');
+            }
+        }
+
+        // Generate YAML patch
+        function generateYAMLPatch(pod) {
+            return `apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod.pod_name}
+  namespace: ${pod.namespace}
+spec:
+  containers:
+  - name: ${pod.container_name}
+    resources:
+      requests:
+        cpu: "${formatCPU(pod.recommended_cpu)}"
+        memory: "${formatMemory(pod.recommended_memory)}"
+      limits:
+        cpu: "${formatCPU(pod.recommended_cpu * 1.2)}"
+        memory: "${formatMemory(pod.recommended_memory * 1.2)}"`;
+        }
+
+        // Download file helper
+        function downloadFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/yaml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Refresh all data
+        async function refreshData() {
+            showToast('Refreshing data...', 'info');
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                // Update stats cards
+                document.getElementById('totalSavings').textContent = `$${stats.total_monthly_savings.toFixed(2)}`;
+                document.getElementById('overProvisioned').textContent = stats.over_provisioned;
+                document.getElementById('underProvisioned').textContent = stats.under_provisioned;
+                document.getElementById('optimal').textContent = stats.optimal;
+                
+                // Update charts
+                statusChart.data.datasets[0].data = [stats.over_provisioned, stats.under_provisioned, stats.optimal];
+                statusChart.update();
+                
+                // Reload recommendations
+                await loadRecommendations();
+                
+                // Update timestamp
+                document.getElementById('lastUpdateTime').textContent = new Date().toLocaleString();
+                
+                showToast('Data refreshed successfully', 'success');
+            } catch (error) {
+                console.error('Refresh failed:', error);
+                showToast('Failed to refresh data', 'danger');
+            }
+        }
+
+        // Auto-refresh every 5 minutes
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(refreshData, 5 * 60 * 1000);
+        }
+
+        // Show/hide loading indicator
+        function showLoading(show) {
+            const loader = document.getElementById('loadingIndicator');
+            if (show) {
+                loader.classList.add('show');
+            } else {
+                loader.classList.remove('show');
+            }
+        }
+
+        // Show toast notification
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-white bg-${type} border-0`;
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">${message}</div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            `;
+            container.appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            // Remove toast after it's hidden
+            toast.addEventListener('hidden.bs.toast', () => {
+                container.removeChild(toast);
+            });
+        }
+
+        // Theme toggle
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeIcon(newTheme);
+        }
+
+        function loadTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+        }
+
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById('themeIcon');
+            icon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-fill';
+        }
+
+        // Format helpers
+        function formatCPU(millicores) {
+            if (millicores >= 1) {
+                return `${millicores.toFixed(2)} cores`;
+            }
+            return `${(millicores * 1000).toFixed(0)}m`;
+        }
+
+        function formatMemory(bytes) {
+            const mb = bytes / (1024 * 1024);
+            if (mb >= 1024) {
+                return `${(mb / 1024).toFixed(2)} GB`;
+            }
+            return `${mb.toFixed(0)} MB`;
+        }
+
+        // Sort table
+        function sortTable(column) {
+            // Implementation for client-side sorting if needed
+            console.log('Sort by:', column);
+        }
+    </script>
+</body>
+</html>
+
